@@ -99,8 +99,7 @@ function startUpLeafet(spreadsheetData) {
     window.public_data_layers = {};
     window.public_data_layer_queue = [];
 
-    for( var i=0; i < spreadsheetData.Layers.elements.length; ++i ) {
-        var row = spreadsheetData.Layers.elements[i];
+    spreadsheetData.Layers.elements.forEach(function(row) {
         if( row.Template ) {
             templates[row.Type] = Handlebars.compile(row.Template);
         }
@@ -111,12 +110,11 @@ function startUpLeafet(spreadsheetData) {
             public_data_layer_queue.push(row.Type);
             public_data_layers[row.Type] = row.PublicSubmissionSpreadsheet;
         }
-    }
-
+    });
 
     window.icons = {};
-    for( var i=0; i < spreadsheetData.Markers.elements.length; ++i ) {
-        var row = spreadsheetData.Markers.elements[i];
+
+    spreadsheetData.Markers.elements.forEach(function(row) {
         icons[row.type] = L.icon({ 
             iconUrl: row.iconurl,
             iconSize: [parseInt(row.iconwidth), parseInt(row.iconheight)],
@@ -126,7 +124,8 @@ function startUpLeafet(spreadsheetData) {
             shadowSize: [parseInt(row.shadowwidth), parseInt(row.shadowheight)],
             shadowAnchor: [parseInt(row.shadowanchorx), parseInt(row.shadowanchory)],
         });
-    }
+    });
+
     window.layers = {};
 
     // Initialize some layers by hand to force a certain display order
@@ -140,110 +139,111 @@ function startUpLeafet(spreadsheetData) {
     $.each(spreadsheetData, function(data_type, elements) {
         if( data_type == "Markers" || data_type == "Layers" ) { return; }
         var tabletopData = elements.elements;
-	for (var num = 0; num < tabletopData.length; num ++) {
-	    var dataLat = tabletopData[num].latitude;
-	    var dataLong = tabletopData[num].longitude;
+        tabletopData.forEach(function(element) {
+            var dataLat = element.latitude;
+            var dataLong = element.longitude;
             if( !dataLat || !dataLong || !parseFloat(dataLat) || !parseFloat(dataLong) ) {
-                continue;
+                return;
             }
-            var date = tabletopData[num][dateAttribute];
+
+            var date = element[dateAttribute];
             if( hidePastEvents && date ) {
                 date = new Date(date);
                 if( !isNaN(date.getTime()) ) {
                     if( date <= testDate ) {
-                        continue;
+                        return;
                     }
                 }
             }
-	    var marker_location = new L.LatLng(dataLat, dataLong);
+
+            var marker_location = new L.LatLng(dataLat, dataLong);
             if( icons[data_type] ) {
-    	        var layer = new L.Marker(marker_location, {"icon": icons[data_type]});
+                var layer = new L.Marker(marker_location, {"icon": icons[data_type]});
             } else {
                 var layer = new L.Marker(marker_location);
             }
-    	    // Create the popup by rendering handlebars template
-    	    var popup = templates[data_type] && templates[data_type](tabletopData[num]);
-    	    // Add to our marker
+
+            // Create the popup by rendering handlebars template
+            var popup = templates[data_type] && templates[data_type](element);
+
+            // Add to our marker
             if( popup ) {
-	        layer.bindPopup(popup);
+               layer.bindPopup(popup);
             }
-	
+
             var layerGroup = layers[data_type];
             if( typeof(layerGroup) === "undefined" ) {
                 layers[data_type] = layerGroup = L.layerGroup();
             }
-            
-	    // Add marker to our to map
-	    layerGroup.addLayer(layer);
 
-	}
+            // Add marker to our to map
+            layerGroup.addLayer(layer);
+        });
     });
     
     nextStepInMapSetup();
 };
 
 function fetchPublicDataSpreadsheets() {
+    var data_type = public_data_layer_queue.pop();
+    if( public_data_layers[data_type] && (
+        !layersToShow || $.inArray(data_type, layersToShow) !== -1 )) {
 
-  var data_type = public_data_layer_queue.pop();
+        MAP_waiting += 1;
 
-        if( public_data_layers[data_type] && (
-            !layersToShow || $.inArray(data_type, layersToShow) !== -1 )) {
+        Tabletop.init({
+            key: public_data_layers[data_type],
+            callback: function(public_data) { 
+                var testDate = new Date();
+                testDate.setHours(testDate.getHours() - 12);
 
-            MAP_waiting += 1;
-            
-            Tabletop.init({
-                key: public_data_layers[data_type],
-                callback: function(public_data) { 
-
-                    var testDate = new Date();
-                    testDate.setHours(testDate.getHours() - 12);
-
-                    for( var i=0; i<public_data.length; ++i ) {
-                        var public_row = public_data[i];
-
-                        if( !public_row.latitude || !public_row.longitude || !parseFloat(public_row.latitude) || !parseFloat(public_row.longitude) ) {
-                            // @@TODO log it
-                            continue;
-                        }
-                        var date = public_row[dateAttribute];
-                        if( hidePastEvents && date ) {
-                            date = new Date(date);
-                            if( !isNaN(date.getTime()) ) {
-                                if( date <= testDate ) {
-                                    continue;
-                                }
+                public_data.forEach(function(public_row) {
+                    if( !public_row.latitude || !public_row.longitude || !parseFloat(public_row.latitude) || !parseFloat(public_row.longitude) ) {
+                        // @@TODO log it
+                        continue;
+                    }
+                    var date = public_row[dateAttribute];
+                    if( hidePastEvents && date ) {
+                        date = new Date(date);
+                        if( !isNaN(date.getTime()) ) {
+                            if( date <= testDate ) {
+                                continue;
                             }
                         }
-
-                        var marker_location = new L.LatLng(public_row.latitude, public_row.longitude);
-                        if( icons[data_type] ) {
-    	                    var layer = new L.Marker(marker_location, {"icon": icons[data_type]});
-                        } else {
-                            var layer = new L.Marker(marker_location);
-                        }
-    	                // Create the popup by rendering handlebars template
-    	                var popup = (templates[data_type] || default_template)(public_row);
-    	                // Add to our marker
-	                layer.bindPopup(popup);
-	                
-                        var layerGroup = layers[data_type];
-                        if( typeof(layerGroup) === "undefined" ) {
-                            layers[data_type] = layerGroup = L.layerGroup();
-                        }
-                        
-	                // Add marker to our to map
-	                layerGroup.addLayer(layer);
-                        clusters.removeLayers(layerGroup.getLayers());
-                        clusters.addLayers(layerGroup.getLayers());
                     }
-                    --MAP_waiting;
-                    nextStepInMapSetup();
-                },
-                simpleSheet: true,
-                debug: false
-                //proxy: "//350dotorg.github.io/megamap-data"
-            });
-        }
+
+                    var marker_location = new L.LatLng(public_row.latitude, public_row.longitude);
+                    if( icons[data_type] ) {
+                        var layer = new L.Marker(marker_location, {"icon": icons[data_type]});
+                    } else {
+                        var layer = new L.Marker(marker_location);
+                    }
+
+                    // Create the popup by rendering handlebars template
+                    var popup = (templates[data_type] || default_template)(public_row);
+
+                    // Add to our marker
+                    layer.bindPopup(popup);
+
+                    var layerGroup = layers[data_type];
+                    if( typeof(layerGroup) === "undefined" ) {
+                        layers[data_type] = layerGroup = L.layerGroup();
+                    }
+
+                    // Add marker to our to map
+                    layerGroup.addLayer(layer);
+                    clusters.removeLayers(layerGroup.getLayers());
+                    clusters.addLayers(layerGroup.getLayers());
+                });
+
+                --MAP_waiting;
+                nextStepInMapSetup();
+            },
+            simpleSheet: true,
+            debug: false
+            //proxy: "//350dotorg.github.io/megamap-data"
+        });
+    }
 
 };
   
